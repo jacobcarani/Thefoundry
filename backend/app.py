@@ -1,11 +1,14 @@
 import json
 import os
+import subprocess
+import sys
 from pathlib import Path
 
 from dotenv import load_dotenv
 from flask import Flask, jsonify, request, send_from_directory
 from flask_cors import CORS
 
+from fea_calibration_store import load_calibration_state
 from fea_pipeline import parse_forces_with_gemini, run_fenicsx_simulation
 from mesh_preprocess import convert_step_to_stl, preprocess_stl
 from session_logger import SessionLogger
@@ -24,6 +27,34 @@ session_logger = SessionLogger(SESSION_LOG_PATH)
 session_logger.log("App started", {"message": "Flask app booted"})
 
 
+def _run_calibration_subprocess(iterations: int, resolution: str) -> dict:
+    cmd = [
+        sys.executable,
+        "calibrate_fea.py",
+        "--iterations",
+        str(int(iterations)),
+        "--resolution",
+        str(resolution),
+        "--json",
+    ]
+    completed = subprocess.run(
+        cmd,
+        cwd=BASE_DIR,
+        capture_output=True,
+        text=True,
+        timeout=600,
+    )
+    if completed.returncode != 0:
+        detail = (completed.stderr or completed.stdout or "calibration subprocess failed").strip()
+        raise RuntimeError(detail)
+
+    lines = [line for line in completed.stdout.splitlines() if line.strip()]
+    if not lines:
+        raise RuntimeError("Calibration subprocess returned no output")
+
+    return json.loads(lines[-1])
+
+
 @app.get("/health")
 def health():
     return jsonify({"status": "ok"})
@@ -32,7 +63,7 @@ def health():
 @app.post("/api/upload")
 def upload_file():
     file = request.files.get("file")
-    resolution = request.form.get("resolution", "low")
+    resolution = request.form.get("resolution", "high")
     if file is None or file.filename is None or file.filename.strip() == "":
         return jsonify({"error": "No file provided"}), 400
 
@@ -80,6 +111,7 @@ def parse_forces():
     payload = request.get_json(silent=True) or {}
     description = payload.get("description", payload.get("force_description", ""))
     faces = payload.get("faces", payload.get("painted_faces", []))
+    part_context = payload.get("part_context", {})
 
     if not description:
         return jsonify({"error": "description is required"}), 400
@@ -97,6 +129,7 @@ def parse_forces():
             description=description,
             faces=faces,
             api_key=os.getenv("GEMINI_API_KEY", ""),
+            part_context=part_context,
         )
 
         session_logger.log(
@@ -115,7 +148,8 @@ def run_simulation():
     payload = request.get_json(silent=True) or {}
     stl_filename = payload.get("stl_filename")
     forces = payload.get("forces", payload.get("structured_forces", []))
-    resolution = payload.get("resolution", "low")
+    resolution = payload.get("resolution", "high")
+    part_context = payload.get("part_context", {})
 
     if not stl_filename:
         return jsonify({"error": "stl_filename is required"}), 400
@@ -131,6 +165,7 @@ def run_simulation():
                 "resolution": resolution,
                 "stl_filename": stl_filename,
                 "structured_force_count": len(forces),
+                "material": part_context.get("material", "unknown"),
             },
         )
 
@@ -138,7 +173,38 @@ def run_simulation():
             stl_path=stl_path,
             forces=forces,
             resolution=resolution,
+            part_context=part_context,
         )
+
+        # One-time bootstrap calibration: calibrate once to set up app correctly,
+        # then keep simulation behavior stable.
+        solver_name = str(result.get("solver", ""))
+        if solver_name.startswith("synthetic_fallback"):
+            try:
+                calibration_state = load_calibration_state()
+                is_calibrated = bool(calibration_state.get("last_calibration_utc"))
+
+                if not is_calibrated:
+                    calibration_result = _run_calibration_subprocess(iterations=2, resolution=resolution)
+                    result["auto_calibration"] = {
+                        "ran": True,
+                        "mode": "bootstrap_once",
+                        "synthetic_target_pa": calibration_result.get("synthetic_target_pa"),
+                        "last_calibration_utc": calibration_result.get("last_calibration_utc"),
+                    }
+                else:
+                    result["auto_calibration"] = {
+                        "ran": False,
+                        "mode": "bootstrap_once",
+                        "reason": "already_calibrated",
+                        "last_calibration_utc": calibration_state.get("last_calibration_utc"),
+                    }
+            except Exception as calibration_exc:
+                result["auto_calibration"] = {
+                    "ran": False,
+                    "mode": "bootstrap_once",
+                    "warning": str(calibration_exc),
+                }
 
         session_logger.log(
             "Simulation completed",
@@ -164,6 +230,26 @@ def run_simulation():
         return jsonify(result)
     except Exception as exc:
         return jsonify({"error": f"Simulation failed: {str(exc)}"}), 500
+
+
+@app.post("/api/calibrate_fea")
+def calibrate_fea():
+    payload = request.get_json(silent=True) or {}
+    resolution = payload.get("resolution", "high")
+    iterations = payload.get("iterations", 3)
+
+    try:
+        result = _run_calibration_subprocess(iterations=iterations, resolution=resolution)
+        session_logger.log(
+            "FEA calibration completed",
+            {
+                "iterations": result.get("iterations"),
+                "synthetic_target_pa": result.get("synthetic_target_pa"),
+            },
+        )
+        return jsonify(result)
+    except Exception as exc:
+        return jsonify({"error": f"Calibration failed: {str(exc)}"}), 500
 
 
 @app.post("/api/log_event")

@@ -13,7 +13,6 @@ import {
   Quaternion,
   Vector3,
 } from 'three';
-import PartDescriptionForm from './components/PartDescriptionForm';
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://127.0.0.1:5000';
 
@@ -229,10 +228,9 @@ export default function App() {
   const [isLoading, setIsLoading] = useState(false);
 
   const [partDescription, setPartDescription] = useState({ material: '', partPurpose: '' });
-  const [forceDescription, setForceDescription] = useState('');
+  const [sharedDescriptionText, setSharedDescriptionText] = useState('');
+  const [descriptionStage, setDescriptionStage] = useState('part');
   const [forces, setForces] = useState([]);
-  const [parsedForces, setParsedForces] = useState([]);
-  const [pendingForces, setPendingForces] = useState([]);
   const [simulationResult, setSimulationResult] = useState(null);
   const [stressVertexColors, setStressVertexColors] = useState(null);
   const [meshRepaired, setMeshRepaired] = useState(false);
@@ -338,9 +336,7 @@ export default function App() {
         centroid: stats.centroid,
         paintedArea: stats.area,
         force_hint: {
-          type: force.type,
-          magnitude: force.magnitude,
-          direction: force.direction,
+          description: force.description || '',
         },
       });
     });
@@ -424,7 +420,7 @@ export default function App() {
     try {
       const formData = new FormData();
       formData.append('file', file);
-      formData.append('resolution', 'low');
+      formData.append('resolution', 'high');
 
       const uploadResponse = await fetch(`${API_BASE}/api/upload`, {
         method: 'POST',
@@ -557,52 +553,123 @@ export default function App() {
 
   const createEmptyForce = () => ({
     id: Date.now() + Math.floor(Math.random() * 1000),
-    type: '',
-    magnitude: '',
-    direction: '',
+    description: '',
     paintedVertexIndices: [],
     normal: [0, 0, 1],
     centroid: [0, 0, 0],
     paintedArea: 0,
   });
 
-  const moveToNextForce = () => {
-    if (forces.length === 0) {
-      setForces([createEmptyForce()]);
-      setSelectedForceIndex(0);
-      setPaintingForceIndex(null);
-      setStatus('Created Force #1. Left-drag to paint this force region.');
-      return;
-    }
+  const extractPartContextFromText = (text) => {
+    const raw = String(text || '').trim();
+    const lines = raw
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter(Boolean);
 
-    const startFrom = selectedForceIndex === null ? -1 : selectedForceIndex;
-    let foundIndex = -1;
-    for (let i = startFrom + 1; i < forces.length; i += 1) {
-      if (!forces[i]?.paintedVertexIndices || forces[i].paintedVertexIndices.length === 0) {
-        foundIndex = i;
-        break;
+    let material = '';
+    let partPurpose = '';
+
+    for (const line of lines) {
+      const lower = line.toLowerCase();
+      if (!material && lower.startsWith('material')) {
+        material = line.split(':').slice(1).join(':').trim();
+        continue;
+      }
+      if (!partPurpose && (lower.startsWith('part') || lower.startsWith('purpose'))) {
+        partPurpose = line.split(':').slice(1).join(':').trim();
       }
     }
 
-    if (foundIndex >= 0) {
-      setSelectedForceIndex(foundIndex);
-      setPaintingForceIndex(null);
-      setStatus(`Now defining Force #${foundIndex + 1}. Left-drag to paint.`);
+    if (!partPurpose) {
+      partPurpose = lines[0] || raw;
+    }
+    if (!material) {
+      const materialMatch = raw.match(/\b(aluminum|steel|titanium|pla|abs|nylon|carbon\s*fiber|brass|copper)\b/i);
+      material = materialMatch ? materialMatch[0] : 'unknown';
+    }
+
+    return {
+      material: material || 'unknown',
+      partPurpose: partPurpose || 'unknown',
+    };
+  };
+
+  const savePartDescriptionFromSharedBox = () => {
+    if (!sharedDescriptionText.trim()) {
+      alert('Please describe what the part is and what it is made of.');
       return;
     }
 
+    const extracted = extractPartContextFromText(sharedDescriptionText);
+    setPartDescription(extracted);
+    setDescriptionStage('force');
+    setSharedDescriptionText('');
+    setStatus('Part description saved. Click Add Force, describe the force, then paint it.');
+  };
+
+  const saveForceDescriptionFromSharedBox = () => {
+    if (selectedForceIndex === null || selectedForceIndex < 0 || selectedForceIndex >= forces.length) {
+      alert('Click Add Force (or select a force) before saving force text.');
+      return;
+    }
+    if (!sharedDescriptionText.trim()) {
+      alert('Please type the force description in plain language.');
+      return;
+    }
+
+    updateForceDescription(selectedForceIndex, sharedDescriptionText.trim());
+    setSharedDescriptionText('');
+    setStatus(`Force #${selectedForceIndex + 1} text saved. Draw on the part where this force is exerted.`);
+
+    const wantsAnother = window.confirm(
+      `Force #${selectedForceIndex + 1} saved.\n\nNow draw on the part where this force is exerted.\n\nDo you want to add another force now?`
+    );
+    if (wantsAnother) {
+      addForce();
+    }
+  };
+
+  const addForce = () => {
     setForces((prev) => {
       const next = [...prev, createEmptyForce()];
       setSelectedForceIndex(next.length - 1);
       setPaintingForceIndex(null);
-      setStatus(`Created Force #${next.length}. Left-drag to paint.`);
+      setDescriptionStage('force');
+      setStatus(`Created Force #${next.length}. Write force in plain language, then paint it.`);
       return next;
     });
+  };
+
+  const updateForceDescription = (index, value) => {
+    setForces((prev) => prev.map((force, i) => (i === index ? { ...force, description: value } : force)));
+  };
+
+  const removeForce = (index) => {
+    setForces((prev) => prev.filter((_, i) => i !== index));
+    if (selectedForceIndex === index) {
+      setSelectedForceIndex(null);
+      setPaintingForceIndex(null);
+    } else if (selectedForceIndex !== null && index < selectedForceIndex) {
+      setSelectedForceIndex(selectedForceIndex - 1);
+    }
+  };
+
+  const selectForce = (index) => {
+    setSelectedForceIndex(index);
+    setPaintingForceIndex(null);
+    setDescriptionStage('force');
+    setSharedDescriptionText(forces[index]?.description || '');
   };
 
   const runSimulation = async () => {
     if (!filename) {
       alert('Please upload an STL or STEP file first.');
+      return;
+    }
+
+    if (!partDescription.partPurpose.trim() || !partDescription.material.trim()) {
+      alert('Please enter both part purpose and material in Step 1.');
       return;
     }
 
@@ -612,65 +679,82 @@ export default function App() {
       return;
     }
 
-    if (!forceDescription.trim()) {
-      alert('Please enter a plain English force description first.');
+    const forceInputIssues = forces.filter(
+      (force) => !(force.description || '').trim() || !(force.paintedVertexIndices || []).length
+    );
+    if (forceInputIssues.length) {
+      alert('Each force needs plain-language text and a painted region before simulation.');
       return;
     }
 
     setIsLoading(true);
 
     try {
-      logSessionEvent('Force description entered', {
-        raw_text: forceDescription,
+      logSessionEvent('Part description entered', {
+        part_purpose: partDescription.partPurpose,
+        material: partDescription.material,
       });
 
-      const parseResponse = await fetch(`${API_BASE}/api/parse_forces`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          description: forceDescription,
-          faces: paintedRegions,
-        }),
-      });
+      const structuredForces = [];
+      for (let i = 0; i < forces.length; i += 1) {
+        const force = forces[i];
+        const region = paintedRegions.find((r) => r.region_id === i);
+        if (!region) {
+          continue;
+        }
 
-      if (!parseResponse.ok) {
-        alert('Failed to parse force description.');
-        return;
+        logSessionEvent('Force description entered', {
+          force_index: i,
+          raw_text: force.description,
+        });
+
+        const parseResponse = await fetch(`${API_BASE}/api/parse_forces`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            description: force.description,
+            faces: [region],
+            part_context: {
+              part_purpose: partDescription.partPurpose,
+              material: partDescription.material,
+            },
+          }),
+        });
+
+        if (!parseResponse.ok) {
+          alert(`Failed to parse force #${i + 1} with Gemini.`);
+          return;
+        }
+
+        const parsed = await parseResponse.json();
+        const firstParsed = Array.isArray(parsed) && parsed.length ? parsed[0] : null;
+        if (!firstParsed) {
+          alert(`Gemini returned no structured force for force #${i + 1}.`);
+          return;
+        }
+
+        structuredForces.push({
+          ...firstParsed,
+          region_id: i,
+        });
       }
-
-      const parseData = await parseResponse.json();
-      const structuredForces = Array.isArray(parseData) ? parseData : [];
-      setPendingForces(structuredForces);
 
       logSessionEvent('Forces parsed', {
         structured_forces: structuredForces,
       });
 
-      setStatus('Parsed forces ready. Confirm in the panel to run simulation.');
-    } catch {
-      alert('An error occurred while submitting the simulation.');
-    } finally {
-      setIsLoading(false);
-    }
-  };
-
-  const confirmRunSimulation = async () => {
-    if (!filename || !pendingForces.length) {
-      return;
-    }
-
-    const paintedRegions = collectPaintedFaces();
-    const simulationForces = mergeParsedForcesWithPaintedRegions(pendingForces, paintedRegions);
-    setIsLoading(true);
-
-    try {
+      const simulationForces = mergeParsedForcesWithPaintedRegions(structuredForces, paintedRegions);
       const response = await fetch(`${API_BASE}/api/run_simulation`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           stl_filename: filename,
           forces: simulationForces,
-          resolution: 'low',
+          resolution: 'high',
+          part_context: {
+            material: partDescription.material,
+            part_purpose: partDescription.partPurpose,
+          },
         }),
       });
 
@@ -678,8 +762,6 @@ export default function App() {
         alert('Failed to submit simulation.');
       } else {
         const result = await response.json();
-        setParsedForces(pendingForces);
-        setPendingForces([]);
         setSimulationResult(result);
         if (geometry && result.stress_points) {
           const stressColors = buildStressColors(geometry, result.stress_points);
@@ -863,190 +945,408 @@ export default function App() {
           flex: 1,
           display: 'flex',
           flexDirection: 'column',
-          gap: 14,
-          padding: 20,
-          background: '#f9fbfe',
+          background: '#f5f7fa',
           borderLeft: '1px solid #d0d9e6',
           overflowY: 'auto',
         }}
       >
-        <PartDescriptionForm
-          forces={forces}
-          setForces={setForces}
-          onSaveDescription={setPartDescription}
-          activeForceIndex={activeForceIndex}
-        />
-
+        {/* Chat-style message feed */}
         <div
           style={{
-            background: '#ffffff',
-            border: '1px solid #d8e2f0',
-            borderRadius: 8,
-            padding: 12,
+            flex: 1,
+            overflowY: 'auto',
+            padding: '20px 16px',
+            display: 'flex',
+            flexDirection: 'column',
+            gap: 12,
           }}
         >
-          <div style={{ fontWeight: 600, marginBottom: 8 }}>Plain English Force Description</div>
-          <textarea
-            value={forceDescription}
-            onChange={(e) => setForceDescription(e.target.value)}
-            placeholder="Describe your loads in plain English..."
-            rows={4}
-            style={{ width: '100%', resize: 'vertical' }}
-          />
-        </div>
-
-        <div
-          style={{
-            background: '#eaf2ff',
-            border: '1px solid #bfd0ea',
-            borderRadius: 8,
-            padding: 10,
-            fontSize: 13,
-            color: '#1a2b41',
-          }}
-        >
-          Active Force:{' '}
-          {activeForce
-            ? `${activeForce.type || 'Force'} ${activeForce.magnitude || 0}N ${activeForce.direction || ''}`
-            : 'All current forces placed'}
-        </div>
-
-        <button
-          onClick={moveToNextForce}
-          style={{
-            padding: '10px 12px',
-            borderRadius: 8,
-            border: 'none',
-            background: '#ff9800',
-            color: '#fff',
-            fontWeight: 600,
-            cursor: 'pointer',
-          }}
-        >
-          Define Another Force
-        </button>
-
-        {selectedForceIndex !== null && (
-          <div
-            style={{
-              background: '#fff6e7',
-              border: '1px solid #ffd18d',
-              borderRadius: 8,
-              padding: 10,
-              fontSize: 12,
-              color: '#8a5200',
-            }}
-          >
-            Currently painting Force #{selectedForceIndex + 1}. Left-drag continues on this same force until you click Define Another Force.
-          </div>
-        )}
-
-        <button
-          onClick={runSimulation}
-          disabled={isLoading}
-          style={{
-            padding: '12px 14px',
-            borderRadius: 8,
-            border: 'none',
-            background: isLoading ? '#9cb1cb' : '#265f9e',
-            color: '#fff',
-            fontWeight: 600,
-            cursor: isLoading ? 'not-allowed' : 'pointer',
-          }}
-        >
-          {isLoading ? 'Running...' : 'Run Simulation'}
-        </button>
-
-        {pendingForces.length > 0 && (
-          <div
-            style={{
-              background: '#ffffff',
-              border: '1px solid #d8e2f0',
-              borderRadius: 8,
-              padding: 12,
-              fontSize: 13,
-              color: '#1a2b41',
-            }}
-          >
-            <div style={{ fontWeight: 700, marginBottom: 8 }}>Parsed Forces Confirmation</div>
-            <pre
+          {/* Initial system message */}
+          {!geometry && (
+            <div
               style={{
-                margin: 0,
-                background: '#f4f8ff',
-                border: '1px solid #d8e2f0',
-                borderRadius: 6,
-                padding: 8,
-                maxHeight: 180,
-                overflow: 'auto',
+                background: '#e3f2fd',
+                border: '1px solid #90caf9',
+                borderRadius: 8,
+                padding: '12px 14px',
+                fontSize: 13,
+                color: '#1565c0',
               }}
             >
-              {JSON.stringify(pendingForces, null, 2)}
-            </pre>
+              👋 Upload an STL or STEP file to begin. Then describe your part and the forces acting on it in plain language.
+            </div>
+          )}
 
-            <div style={{ display: 'flex', gap: 8, marginTop: 10 }}>
-              <button
-                onClick={confirmRunSimulation}
+          {/* Upload success */}
+          {geometry && !partDescription.partPurpose && (
+            <div
+              style={{
+                background: '#e8f5e9',
+                border: '1px solid #81c784',
+                borderRadius: 8,
+                padding: '12px 14px',
+                fontSize: 13,
+                color: '#2e7d32',
+              }}
+            >
+              ✓ {filename} loaded successfully
+              {triangleCounts.before && (
+                <div style={{ fontSize: 12, marginTop: 4 }}>
+                  Mesh: {triangleCounts.before} → {triangleCounts.after} triangles
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Part description prompt */}
+          {geometry && descriptionStage === 'part' && !partDescription.partPurpose && (
+            <div
+              style={{
+                background: '#fff9c4',
+                border: '1px solid #fbc02d',
+                borderRadius: 8,
+                padding: '12px 14px',
+                fontSize: 13,
+                color: '#f57f17',
+              }}
+            >
+              📝 What is this part? What material is it? (e.g., "aluminum motor bracket")
+            </div>
+          )}
+
+          {/* Part description display */}
+          {partDescription.partPurpose && (
+            <div
+              style={{
+                background: '#f3e5f5',
+                border: '1px solid #ce93d8',
+                borderRadius: 8,
+                padding: '12px 14px',
+                fontSize: 13,
+                color: '#6a1b9a',
+              }}
+            >
+              ✓ Part: {partDescription.partPurpose} | Material: {partDescription.material}
+            </div>
+          )}
+
+          {/* Forces list */}
+          {forces.length > 0 && (
+            <div
+              style={{
+                background: '#f3e5f5',
+                border: '1px solid #ce93d8',
+                borderRadius: 8,
+                padding: '12px 14px',
+                fontSize: 13,
+              }}
+            >
+              <div style={{ fontWeight: 600, color: '#6a1b9a', marginBottom: 6 }}>
+                Forces added:
+              </div>
+              {forces.map((force, idx) => (
+                <div
+                  key={force.id}
+                  style={{
+                    fontSize: 12,
+                    color: '#7b1fa2',
+                    marginBottom: idx < forces.length - 1 ? 4 : 0,
+                  }}
+                >
+                  • Force {idx + 1}: {force.description || '(no description)'}
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* Force prompt */}
+          {partDescription.partPurpose && descriptionStage === 'force' && (
+            <div
+              style={{
+                background: '#fff9c4',
+                border: '1px solid #fbc02d',
+                borderRadius: 8,
+                padding: '12px 14px',
+                fontSize: 13,
+                color: '#f57f17',
+              }}
+            >
+              ⚡ Describe Force {selectedForceIndex + 1}: magnitude, direction, and where it acts. Then paint it on the model.
+            </div>
+          )}
+
+          {/* Paint instruction */}
+          {selectedForceIndex !== null && forces[selectedForceIndex]?.description && !paintModeEnabled && (
+            <div
+              style={{
+                background: '#fff3e0',
+                border: '1px solid #ffb74d',
+                borderRadius: 8,
+                padding: '12px 14px',
+                fontSize: 13,
+                color: '#e65100',
+              }}
+            >
+              🎨 Paint Mode is off. Enable it below to paint Force {selectedForceIndex + 1} on the model.
+            </div>
+          )}
+
+          {/* Ready to simulate */}
+          {partDescription.partPurpose && forces.length > 0 && forces.every(f => f.description) && (
+            <div
+              style={{
+                background: '#c8e6c9',
+                border: '1px solid #66bb6a',
+                borderRadius: 8,
+                padding: '12px 14px',
+                fontSize: 13,
+                color: '#2e7d32',
+              }}
+            >
+              ✓ Ready! Click <strong>Analyze</strong> to run the simulation.
+            </div>
+          )}
+
+          {/* Simulation results */}
+          {simulationResult && (
+            <div
+              style={{
+                background: simulationResult.passed ? '#e8f5e9' : '#ffebee',
+                border: simulationResult.passed ? '2px solid #66bb6a' : '2px solid #ef5350',
+                borderRadius: 8,
+                padding: '14px 16px',
+                fontSize: 13,
+              }}
+            >
+              <div
+                style={{
+                  fontSize: 20,
+                  fontWeight: 800,
+                  letterSpacing: 1,
+                  color: simulationResult.passed ? '#1b5e20' : '#c62828',
+                  marginBottom: 10,
+                }}
+              >
+                {simulationResult.passed ? '✓ PASSED' : '✗ FAILED'}
+              </div>
+              <div style={{ color: '#1a2b41', marginBottom: 8 }}>
+                <div>Max stress: <strong>{Number(simulationResult.max_stress || 0).toExponential(2)}</strong> Pa</div>
+                <div>Safety factor: <strong>{Number(simulationResult.safety_factor || 0).toFixed(1)}x</strong></div>
+              </div>
+              {!simulationResult.passed && (
+                <div style={{ fontSize: 12, color: '#c62828', marginTop: 8 }}>
+                  💡 Refine your design and try again.
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+
+        {/* Input area */}
+        <div
+          style={{
+            borderTop: '1px solid #d0d9e6',
+            padding: '14px 16px',
+            background: '#ffffff',
+          }}
+        >
+          {/* File upload area */}
+          {!geometry && (
+            <div
+              style={{
+                position: 'relative',
+                marginBottom: 10,
+              }}
+            >
+              <input
+                type="file"
+                accept=".stl,.step,.stp"
+                onChange={onFileChange}
                 disabled={isLoading}
                 style={{
-                  padding: '8px 10px',
+                  display: 'none',
+                }}
+                id="file-input"
+              />
+              <label
+                htmlFor="file-input"
+                style={{
+                  display: 'block',
+                  padding: '10px 12px',
+                  borderRadius: 6,
+                  border: '2px dashed #90caf9',
+                  background: '#f0f8ff',
+                  textAlign: 'center',
+                  cursor: isLoading ? 'not-allowed' : 'pointer',
+                  fontSize: 13,
+                  color: '#1565c0',
+                  fontWeight: 500,
+                }}
+              >
+                📁 Choose file or drag here
+              </label>
+            </div>
+          )}
+
+          {/* Brush and paint controls - horizontal compact */}
+          {geometry && (
+            <div
+              style={{
+                display: 'flex',
+                gap: 8,
+                marginBottom: 10,
+                alignItems: 'center',
+                fontSize: 12,
+              }}
+            >
+              <label style={{ color: '#1a2b41', fontWeight: 500, minWidth: 50 }}>
+                Brush:
+              </label>
+              <input
+                type="range"
+                min="2"
+                max="20"
+                step="0.5"
+                value={brushRadius}
+                onChange={(e) => setBrushRadius(Number(e.target.value))}
+                style={{ flex: 1, minWidth: 60 }}
+              />
+              <span style={{ color: '#1a2b41', minWidth: 24 }}>
+                {brushRadius.toFixed(1)}
+              </span>
+              <label
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 4,
+                  cursor: 'pointer',
+                  color: paintModeEnabled ? '#b35900' : '#7a7a7a',
+                  fontWeight: paintModeEnabled ? 600 : 400,
+                }}
+              >
+                <input
+                  type="checkbox"
+                  checked={paintModeEnabled}
+                  onChange={(e) => setPaintModeEnabled(e.target.checked)}
+                  style={{ cursor: 'pointer' }}
+                />
+                Paint
+              </label>
+            </div>
+          )}
+
+          {/* Chat-style input */}
+          {geometry && (
+            <div style={{ display: 'flex', gap: 8, alignItems: 'flex-end' }}>
+              <textarea
+                value={sharedDescriptionText}
+                onChange={(e) => setSharedDescriptionText(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && e.ctrlKey) {
+                    if (descriptionStage === 'part') {
+                      savePartDescriptionFromSharedBox();
+                    } else {
+                      saveForceDescriptionFromSharedBox();
+                    }
+                  }
+                }}
+                rows={2}
+                placeholder={
+                  descriptionStage === 'part'
+                    ? 'Describe your part...'
+                    : `Describe Force ${selectedForceIndex + 1}...`
+                }
+                style={{
+                  flex: 1,
+                  resize: 'none',
+                  borderRadius: 6,
+                  border: '1px solid #d0d9e6',
+                  padding: '10px 12px',
+                  fontFamily: 'system-ui, -apple-system, sans-serif',
+                  fontSize: 13,
+                }}
+              />
+              <button
+                onClick={() => {
+                  if (descriptionStage === 'part') {
+                    savePartDescriptionFromSharedBox();
+                  } else {
+                    saveForceDescriptionFromSharedBox();
+                  }
+                }}
+                style={{
+                  padding: '9px 14px',
                   borderRadius: 6,
                   border: 'none',
-                  background: '#2f7a46',
+                  background: '#265f9e',
                   color: '#fff',
-                  fontWeight: 600,
-                  cursor: isLoading ? 'not-allowed' : 'pointer',
+                  fontWeight: 500,
+                  cursor: 'pointer',
+                  fontSize: 13,
+                  minWidth: 60,
+                  height: 40,
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
                 }}
               >
-                Confirm and Run
-              </button>
-              <button
-                onClick={() => setPendingForces([])}
-                disabled={isLoading}
-                style={{
-                  padding: '8px 10px',
-                  borderRadius: 6,
-                  border: '1px solid #9aaeca',
-                  background: '#fff',
-                  color: '#1a2b41',
-                  fontWeight: 600,
-                  cursor: isLoading ? 'not-allowed' : 'pointer',
-                }}
-              >
-                Cancel
+                Send
               </button>
             </div>
-          </div>
-        )}
+          )}
 
-        {simulationResult && (
-          <div
-            style={{
-              background: '#ffffff',
-              border: '1px solid #d8e2f0',
-              borderRadius: 8,
-              padding: 12,
-              fontSize: 13,
-              color: '#1a2b41',
-            }}
-          >
-            <div><strong>Max Stress:</strong> {Number(simulationResult.max_stress || 0).toFixed(3)}</div>
-            <div><strong>Min Stress:</strong> {Number(simulationResult.min_stress || 0).toFixed(3)}</div>
-            <div><strong>Safety Factor:</strong> {Number(simulationResult.safety_factor || 0).toFixed(3)}</div>
-            <div style={{ marginTop: 12 }}>
-              <span
-                style={{
-                  display: 'inline-block',
-                  fontSize: 24,
-                  fontWeight: 800,
-                  letterSpacing: 0.8,
-                  color: simulationResult.passed ? '#1f7a3f' : '#b23b45',
-                }}
-              >
-                {simulationResult.passed ? 'PASSED' : 'FAILED'}
-              </span>
+          {/* Compact button row */}
+          {geometry && partDescription.partPurpose && (
+            <div
+              style={{
+                display: 'flex',
+                gap: 6,
+                marginTop: 10,
+                flexWrap: 'wrap',
+              }}
+            >
+              {descriptionStage === 'force' && (
+                <button
+                  onClick={addForce}
+                  style={{
+                    padding: '8px 12px',
+                    borderRadius: 6,
+                    border: '1px solid #ff9800',
+                    background: 'transparent',
+                    color: '#ff9800',
+                    fontWeight: 500,
+                    cursor: 'pointer',
+                    fontSize: 12,
+                  }}
+                >
+                  + Add another force
+                </button>
+              )}
+              {forces.length > 0 && forces.every(f => f.description) && !isLoading && (
+                <button
+                  onClick={runSimulation}
+                  style={{
+                    padding: '8px 14px',
+                    borderRadius: 6,
+                    border: 'none',
+                    background: '#265f9e',
+                    color: '#fff',
+                    fontWeight: 600,
+                    cursor: 'pointer',
+                    fontSize: 12,
+                  }}
+                >
+                  🔍 Analyze
+                </button>
+              )}
+              {isLoading && (
+                <div style={{ fontSize: 12, color: '#7a7a7a', fontStyle: 'italic' }}>
+                  Analyzing...
+                </div>
+              )}
             </div>
-          </div>
-        )}
+          )}
+        </div>
       </div>
     </div>
   );
