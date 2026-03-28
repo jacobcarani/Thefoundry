@@ -15,3 +15,8 @@ Thumbs.db
 
 # Local artifacts
 test_upload.stl
+
+# Secrets
+.env
+.env.*
+!.env.example

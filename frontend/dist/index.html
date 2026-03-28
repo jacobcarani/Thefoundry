@@ -4,10 +4,30 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>The Foundry</title>
-    <script type="module" crossorigin src="/assets/index-BjzNJ_hq.js"></script>
+    <script type="module" crossorigin src="/assets/index-BCAmq5hh.js"></script>
     <link rel="stylesheet" crossorigin href="/assets/index-Dk0R_Nam.css">
   </head>
   <body>
-    <div id="root"></div>
+    <div id="root"></div>
+    <button
+      id="session-log-btn"
+      type="button"
+      onclick="window.open('http://127.0.0.1:5000/api/session_log', '_blank')"
+      style="
+        position: fixed;
+        left: 16px;
+        bottom: 16px;
+        z-index: 10000;
+        padding: 10px 14px;
+        border: none;
+        border-radius: 8px;
+        background: #1f4f84;
+        color: #ffffff;
+        cursor: pointer;
+        box-shadow: 0 4px 10px rgba(0,0,0,0.2);
+      "
+    >
+      Session Log
+    </button>
   </body>
 </html>

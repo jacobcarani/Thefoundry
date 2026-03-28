@@ -1,0 +1,13 @@
+{
+  "session_id": "055548f1-b01e-450f-a183-85a4d0f1e7d8",
+  "entries": [
+    {
+      "timestamp": "2026-03-28T20:53:48.110702+00:00",
+      "event_type": "App started",
+      "data": {
+        "message": "Flask app booted"
+      },
+      "session_id": "055548f1-b01e-450f-a183-85a4d0f1e7d8"
+    }
+  ]
+}
