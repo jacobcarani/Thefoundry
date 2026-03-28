@@ -1,206 +1,21 @@
 {
-  "session_id": "0016087c-25eb-49f0-b21d-3de6332c22b3",
+  "session_id": "88a7844f-bd5c-4a4b-86fa-70ae898eeb68",
   "entries": [
     {
-      "timestamp": "2026-03-28T23:42:41.281188+00:00",
+      "timestamp": "2026-03-28T23:51:41.600095+00:00",
       "event_type": "App started",
       "data": {
         "message": "Flask app booted"
       },
-      "session_id": "0016087c-25eb-49f0-b21d-3de6332c22b3"
+      "session_id": "88a7844f-bd5c-4a4b-86fa-70ae898eeb68"
     },
     {
-      "timestamp": "2026-03-28T23:42:41.281396+00:00",
+      "timestamp": "2026-03-28T23:51:41.600321+00:00",
       "event_type": "Default model available",
       "data": {
         "path": "MOUSQUETON_default.stl"
       },
-      "session_id": "0016087c-25eb-49f0-b21d-3de6332c22b3"
-    },
-    {
-      "timestamp": "2026-03-28T23:43:52.614162+00:00",
-      "event_type": "Force description entered",
-      "data": {
-        "raw_text": "100 lbs pulling up",
-        "painted_face_count": 0
-      },
-      "session_id": "0016087c-25eb-49f0-b21d-3de6332c22b3"
-    },
-    {
-      "timestamp": "2026-03-28T23:43:54.252565+00:00",
-      "event_type": "Forces parsed",
-      "data": {
-        "structured_force_count": 0
-      },
-      "session_id": "0016087c-25eb-49f0-b21d-3de6332c22b3"
-    },
-    {
-      "timestamp": "2026-03-28T23:43:58.500919+00:00",
-      "event_type": "Force point placed",
-      "data": {
-        "xyz": {
-          "x": 0.6678996143455276,
-          "y": -0.23465018819439495,
-          "z": -37.65085665588476
-        },
-        "force_index": 0,
-        "painted_vertices": 411
-      },
-      "session_id": "0016087c-25eb-49f0-b21d-3de6332c22b3"
-    },
-    {
-      "timestamp": "2026-03-28T23:43:58.508245+00:00",
-      "event_type": "Force point placed",
-      "data": {
-        "xyz": {
-          "x": 0.6678996143455276,
-          "y": -0.23465018819439495,
-          "z": -37.65085665588476
-        },
-        "force_index": 0,
-        "painted_vertices": 411
-      },
-      "session_id": "0016087c-25eb-49f0-b21d-3de6332c22b3"
-    },
-    {
-      "timestamp": "2026-03-28T23:44:17.613835+00:00",
-      "event_type": "Force point placed",
-      "data": {
-        "xyz": {
-          "x": -2.2953694625658443,
-          "y": -0.9109587160303559,
-          "z": 40.515505583105394
-        },
-        "force_index": 0,
-        "painted_vertices": 869
-      },
-      "session_id": "0016087c-25eb-49f0-b21d-3de6332c22b3"
-    },
-    {
-      "timestamp": "2026-03-28T23:44:17.616713+00:00",
-      "event_type": "Force point placed",
-      "data": {
-        "xyz": {
-          "x": -2.2953694625658443,
-          "y": -0.9109587160303559,
-          "z": 40.515505583105394
-        },
-        "force_index": 0,
-        "painted_vertices": 869
-      },
-      "session_id": "0016087c-25eb-49f0-b21d-3de6332c22b3"
-    },
-    {
-      "timestamp": "2026-03-28T23:44:30.926489+00:00",
-      "event_type": "Force point placed",
-      "data": {
-        "xyz": {
-          "x": -3.8793997524315103,
-          "y": 2.71093983279466,
-          "z": 40.86046321306667
-        },
-        "force_index": 0,
-        "painted_vertices": 893
-      },
-      "session_id": "0016087c-25eb-49f0-b21d-3de6332c22b3"
-    },
-    {
-      "timestamp": "2026-03-28T23:44:30.935971+00:00",
-      "event_type": "Force point placed",
-      "data": {
-        "xyz": {
-          "x": -3.8793997524315103,
-          "y": 2.71093983279466,
-          "z": 40.86046321306667
-        },
-        "force_index": 0,
-        "painted_vertices": 893
-      },
-      "session_id": "0016087c-25eb-49f0-b21d-3de6332c22b3"
-    },
-    {
-      "timestamp": "2026-03-28T23:44:31.160900+00:00",
-      "event_type": "Force point placed",
-      "data": {
-        "xyz": {
-          "x": -3.715048164511245,
-          "y": 2.690410326005941,
-          "z": 40.897346108651824
-        },
-        "force_index": 0,
-        "painted_vertices": 893
-      },
-      "session_id": "0016087c-25eb-49f0-b21d-3de6332c22b3"
-    },
-    {
-      "timestamp": "2026-03-28T23:44:31.177543+00:00",
-      "event_type": "Force point placed",
-      "data": {
-        "xyz": {
-          "x": -3.715048164511245,
-          "y": 2.690410326005941,
-          "z": 40.897346108651824
-        },
-        "force_index": 0,
-        "painted_vertices": 893
-      },
-      "session_id": "0016087c-25eb-49f0-b21d-3de6332c22b3"
-    },
-    {
-      "timestamp": "2026-03-28T23:44:31.220189+00:00",
-      "event_type": "Force point placed",
-      "data": {
-        "xyz": {
-          "x": -3.7736979938858894,
-          "y": 2.372809895436655,
-          "z": 40.521163372910216
-        },
-        "force_index": 0,
-        "painted_vertices": 899
-      },
-      "session_id": "0016087c-25eb-49f0-b21d-3de6332c22b3"
-    },
-    {
-      "timestamp": "2026-03-28T23:44:31.229745+00:00",
-      "event_type": "Force point placed",
-      "data": {
-        "xyz": {
-          "x": -3.7736979938858894,
-          "y": 2.372809895436655,
-          "z": 40.521163372910216
-        },
-        "force_index": 0,
-        "painted_vertices": 899
-      },
-      "session_id": "0016087c-25eb-49f0-b21d-3de6332c22b3"
-    },
-    {
-      "timestamp": "2026-03-28T23:44:31.266497+00:00",
-      "event_type": "Force point placed",
-      "data": {
-        "xyz": {
-          "x": -5.484934212022864,
-          "y": -0.944139008464282,
-          "z": 39.24003688969556
-        },
-        "force_index": 0,
-        "painted_vertices": 1013
-      },
-      "session_id": "0016087c-25eb-49f0-b21d-3de6332c22b3"
-    },
-    {
-      "timestamp": "2026-03-28T23:44:31.279004+00:00",
-      "event_type": "Force point placed",
-      "data": {
-        "xyz": {
-          "x": -5.484934212022864,
-          "y": -0.944139008464282,
-          "z": 39.24003688969556
-        },
-        "force_index": 0,
-        "painted_vertices": 1013
-      },
-      "session_id": "0016087c-25eb-49f0-b21d-3de6332c22b3"
+      "session_id": "88a7844f-bd5c-4a4b-86fa-70ae898eeb68"
     }
   ]
 }
