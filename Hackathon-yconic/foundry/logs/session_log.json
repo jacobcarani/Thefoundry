@@ -1,13 +1,21 @@
 {
-  "session_id": "f7c46829-7769-4b6a-b70a-e6acd9ff49c3",
+  "session_id": "de3ec464-14c4-4d61-82a9-7fc34a60260e",
   "entries": [
     {
-      "timestamp": "2026-03-28T23:31:42.579507+00:00",
+      "timestamp": "2026-03-28T23:39:33.099348+00:00",
       "event_type": "App started",
       "data": {
         "message": "Flask app booted"
       },
-      "session_id": "f7c46829-7769-4b6a-b70a-e6acd9ff49c3"
+      "session_id": "de3ec464-14c4-4d61-82a9-7fc34a60260e"
+    },
+    {
+      "timestamp": "2026-03-28T23:39:33.099680+00:00",
+      "event_type": "Default model available",
+      "data": {
+        "path": "MOUSQUETON_default.stl"
+      },
+      "session_id": "de3ec464-14c4-4d61-82a9-7fc34a60260e"
     }
   ]
 }

@@ -546,6 +546,41 @@ export default function App() {
 
   const activeForceIndex = useMemo(() => forces.findIndex((f) => f.id === activeForceId), [forces, activeForceId]);
 
+  // Auto-load default model on app startup
+  useEffect(() => {
+    const loadDefaultModel = async () => {
+      try {
+        startTaskProgress({ kind: 'model-load', title: 'Model', step: 'Loading default model...', percent: 0 });
+        const response = await fetch(`${API_BASE}/api/default_model`);
+        if (response.ok) {
+          const arrayBuffer = await response.arrayBuffer();
+          const loader = new STLLoader();
+          const geometry = loader.parse(arrayBuffer);
+          geometry.center();
+          geometry.computeVertexNormals();
+          geometry.computeBoundingBox();
+          
+          setGeometry(geometry);
+          setFilename('MOUSQUETON.stl (default)');
+          setStatus('DEFAULT MODEL LOADED. ENTER FORCE DESCRIPTION.');
+          setPartDescription({ material: 'steel', partPurpose: 'carabiner' });
+          
+          updateTaskProgress({ step: 'Ready', percent: 100 });
+          setTimeout(finishTaskProgress, 500);
+          
+          appendTimelineMessage('LOADED', 'Default model (MOUSQUETON steel carabiner) loaded');
+        } else {
+          finishTaskProgress();
+        }
+      } catch (error) {
+        console.warn('Failed to load default model:', error);
+        finishTaskProgress();
+      }
+    };
+
+    loadDefaultModel();
+  }, []);
+
   useEffect(() => {
     if (activeForceId && !forces.some((f) => f.id === activeForceId)) {
       setActiveForceId(null);

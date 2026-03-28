@@ -77,6 +77,14 @@ def health():
     return jsonify({"status": "ok"})
 
 
+@app.get("/api/default_model")
+def get_default_model():
+    """Serve the default MOUSQUETON steel carabiner model to frontend on app startup."""
+    if DEFAULT_MODEL_PATH.exists():
+        return send_from_directory(DEFAULT_MODEL_PATH.parent, DEFAULT_MODEL_PATH.name, as_attachment=False, mimetype="model/stl")
+    return jsonify({"error": "Default model not found"}), 404
+
+
 @app.post("/api/upload")
 def upload_file():
     file = request.files.get("file")
