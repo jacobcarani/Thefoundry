@@ -1,0 +1,17 @@
+# Python
+__pycache__/
+*.py[cod]
+backend/venv/
+backend/uploads/
+
+# Node
+frontend/node_modules/
+frontend/dist/
+
+# OS/Editor
+.vscode/
+.DS_Store
+Thumbs.db
+
+# Local test artifacts
+test_upload.stl
