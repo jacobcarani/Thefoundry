@@ -1,4 +1,5 @@
 import json
+import math
 import os
 import subprocess
 import sys
@@ -8,9 +9,10 @@ from dotenv import load_dotenv
 from flask import Flask, jsonify, request, send_from_directory
 from flask_cors import CORS
 
+from agents import run_agent_pipeline
 from fea_calibration_store import load_calibration_state
 from fea_pipeline import parse_forces_with_gemini, run_fenicsx_simulation
-from mesh_preprocess import convert_step_to_stl, preprocess_stl
+from mesh_preprocess import convert_step_to_stl, preprocess_stl, triangle_count
 from session_logger import SessionLogger
 
 load_dotenv()
@@ -55,6 +57,16 @@ def _run_calibration_subprocess(iterations: int, resolution: str) -> dict:
     return json.loads(lines[-1])
 
 
+def _safe_json_number(value):
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    if not math.isfinite(number):
+        return None
+    return number
+
+
 @app.get("/health")
 def health():
     return jsonify({"status": "ok"})
@@ -86,7 +98,18 @@ def upload_file():
     else:
         return jsonify({"error": "Unsupported file type. Upload .stl, .step, or .stp"}), 400
 
-    preprocess_info = preprocess_stl(model_path, resolution)
+    if source_format == "step" and str(resolution).lower() == "low":
+        tri_count = triangle_count(model_path)
+        preprocess_info = {
+            "mesh_repaired": False,
+            "mesh_refined": False,
+            "triangle_count_before": tri_count,
+            "triangle_count_after": tri_count,
+            "resolution_used": "low",
+            "fast_preview": True,
+        }
+    else:
+        preprocess_info = preprocess_stl(model_path, resolution)
 
     session_logger.log("Model loaded", {"filename": file.filename, "render_filename": model_path.name})
     return jsonify({
@@ -97,6 +120,7 @@ def upload_file():
         "triangle_count_before": int(preprocess_info.get("triangle_count_before", 0)),
         "triangle_count_after": int(preprocess_info.get("triangle_count_after", 0)),
         "mesh_refined": bool(preprocess_info.get("mesh_refined", False)),
+        "fast_preview": bool(preprocess_info.get("fast_preview", False)),
         "resolution_used": preprocess_info.get("resolution_used", resolution),
     })
 
@@ -230,6 +254,61 @@ def run_simulation():
         return jsonify(result)
     except Exception as exc:
         return jsonify({"error": f"Simulation failed: {str(exc)}"}), 500
+
+
+@app.post("/api/run_agent_pipeline")
+def run_agent_pipeline_endpoint():
+    payload = request.get_json(silent=True) or {}
+    stl_filename = payload.get("stl_filename")
+    forces = payload.get("forces", payload.get("structured_forces", []))
+    resolution = payload.get("resolution", "high")
+    part_context = payload.get("part_context", {})
+    session_id = str(payload.get("session_id", "")).strip()
+    painted_faces = payload.get("painted_faces", [])
+
+    if not stl_filename:
+        return jsonify({"error": "stl_filename is required"}), 400
+    if not session_id:
+        return jsonify({"error": "session_id is required"}), 400
+
+    stl_path = UPLOAD_DIR / stl_filename
+    if not stl_path.exists():
+        return jsonify({"error": "STL file not found"}), 404
+
+    try:
+        session_logger.log(
+            "Agent pipeline started",
+            {
+                "session_id": session_id,
+                "resolution": resolution,
+                "stl_filename": stl_filename,
+                "structured_force_count": len(forces),
+                "material": part_context.get("material", "unknown"),
+            },
+        )
+
+        result = run_agent_pipeline(
+            stl_filename=stl_filename,
+            forces=forces,
+            resolution=resolution,
+            part_context=part_context,
+            session_id=session_id,
+            painted_faces=painted_faces,
+        )
+
+        session_logger.log(
+            "Agent pipeline completed",
+            {
+                "session_id": session_id,
+                "iteration_number": result.get("iteration_number", 1),
+                "max_stress": result.get("max_stress"),
+                "safety_factor": _safe_json_number(result.get("safety_factor")),
+                "recommendation_count": len(result.get("redesign_recommendations", [])),
+            },
+        )
+        return jsonify(result)
+    except Exception as exc:
+        return jsonify({"error": f"Agent pipeline failed: {str(exc)}"}), 500
 
 
 @app.post("/api/calibrate_fea")
