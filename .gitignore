@@ -13,5 +13,5 @@ frontend/dist/
 .DS_Store
 Thumbs.db
 
-# Local test artifacts
+# Local artifacts
 test_upload.stl
