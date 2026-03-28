@@ -9,24 +9,29 @@ from dotenv import load_dotenv
 from flask import Flask, jsonify, request, send_from_directory
 from flask_cors import CORS
 
-from agents import run_agent_pipeline
-from fea_calibration_store import load_calibration_state
-from fea_pipeline import parse_forces_with_gemini, run_fenicsx_simulation
-from mesh_preprocess import convert_step_to_stl, preprocess_stl, triangle_count
-from session_logger import SessionLogger
+from core import run_agent_pipeline
+from utils import load_calibration_state, convert_step_to_stl, preprocess_stl, triangle_count, SessionLogger
+from core.pipeline import parse_forces_with_gemini, run_fenicsx_simulation
 
 load_dotenv()
 
 BASE_DIR = Path(__file__).resolve().parent
 REPO_DIR = BASE_DIR.parent
 UPLOAD_DIR = BASE_DIR / "uploads"
+MODELS_DIR = BASE_DIR / "models"
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+MODELS_DIR.mkdir(parents=True, exist_ok=True)
 SESSION_LOG_PATH = REPO_DIR / "Hackathon-yconic" / "foundry" / "logs" / "session_log.json"
 
 app = Flask(__name__)
 CORS(app, resources={r"/api/*": {"origins": ["http://localhost:5173", "http://127.0.0.1:5173"]}})
 session_logger = SessionLogger(SESSION_LOG_PATH)
 session_logger.log("App started", {"message": "Flask app booted"})
+
+# Load default test model on startup.
+DEFAULT_MODEL_PATH = MODELS_DIR / "MOUSQUETON_default.stl"
+if DEFAULT_MODEL_PATH.exists():
+    session_logger.log("Default model available", {"path": DEFAULT_MODEL_PATH.name})
 
 
 def _run_calibration_subprocess(iterations: int, resolution: str) -> dict:

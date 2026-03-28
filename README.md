@@ -25,6 +25,7 @@
 - `GET /api/uploads/<filename>`
 - `POST /api/parse_forces`
 - `POST /api/run_simulation`
+- `POST /api/run_agent_pipeline`
 
 ## Frontend Simulation Flow
 1. Upload STL to `/api/upload`
@@ -33,5 +34,6 @@
 4. Run Simulation:
    - Calls `/api/parse_forces`
    - Shows parsed force confirmation
-   - Calls `/api/run_simulation`
+   - Calls `/api/run_agent_pipeline`
 5. Stress field response is mapped onto mesh vertices using nearest-point lookup and a blue->red gradient
+6. AI redesign recommendations and iteration number are returned with simulation results
