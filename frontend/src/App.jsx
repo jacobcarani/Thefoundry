@@ -548,46 +548,33 @@ export default function App() {
 
   // Auto-load default model on app startup
   useEffect(() => {
-    console.log('[INIT] App mounted, attempting to load default model...');
     const loadDefaultModel = async () => {
       try {
-        console.log('[LOAD] Starting auto-load...');
-        const url = `${API_BASE}/api/default_model`;
-        console.log(`[LOAD] Fetching from: ${url}`);
-        
-        const response = await fetch(url);
-        console.log(`[LOAD] Got response, status: ${response.status}, ok: ${response.ok}`);
-        
+        startTaskProgress({ kind: 'model-load', title: 'Model', step: 'Loading default model...', percent: 0 });
+        const response = await fetch(`${API_BASE}/api/default_model`);
         if (response.ok) {
           const arrayBuffer = await response.arrayBuffer();
-          console.log(`[LOAD] Received arrayBuffer with ${arrayBuffer.byteLength} bytes`);
+          const loader = new STLLoader();
+          const geometry = loader.parse(arrayBuffer);
+          geometry.center();
+          geometry.computeVertexNormals();
+          geometry.computeBoundingBox();
           
-          try {
-            const loader = new STLLoader();
-            const geometry = loader.parse(arrayBuffer);
-            console.log(`[LOAD] Parsed geometry successfully`);
-            
-            geometry.center();
-            geometry.computeVertexNormals();
-            geometry.computeBoundingBox();
-            console.log(`[LOAD] Geometry processed`);
-            
-            setGeometry(geometry);
-            setFilename('MOUSQUETON.stl (default)');
-            setStatus('DEFAULT MODEL LOADED. ENTER FORCE DESCRIPTION.');
-            setPartDescription({ material: 'steel', partPurpose: 'carabiner' });
-            console.log(`[LOAD] State updated`);
-            
-            appendTimelineMessage('LOADED', 'Default model (MOUSQUETON steel carabiner) auto-loaded');
-            console.log(`[LOAD] SUCCESS - Default model fully loaded!`);
-          } catch (parseError) {
-            console.error('[LOAD] STL parse error:', parseError);
-          }
+          setGeometry(geometry);
+          setFilename('MOUSQUETON.stl (default)');
+          setStatus('DEFAULT MODEL LOADED. ENTER FORCE DESCRIPTION.');
+          setPartDescription({ material: 'steel', partPurpose: 'carabiner' });
+          
+          updateTaskProgress({ step: 'Ready', percent: 100 });
+          setTimeout(finishTaskProgress, 500);
+          
+          appendTimelineMessage('LOADED', 'Default model (MOUSQUETON steel carabiner) loaded');
         } else {
-          console.warn(`[LOAD] Response not OK: ${response.status} ${response.statusText}`);
+          finishTaskProgress();
         }
       } catch (error) {
-        console.error('[LOAD] Fatal error:', error);
+        console.warn('Failed to load default model:', error);
+        finishTaskProgress();
       }
     };
 
