@@ -82,28 +82,3 @@ def run_agent_pipeline_endpoint():
 
 if __name__ == "__main__":
     app.run(debug=False, host="127.0.0.1", port=5000)
-
-
-@app.post("/api/log_event")
-def log_event():
-    payload = request.get_json(silent=True) or {}
-    event_type = payload.get("event_type")
-    data = payload.get("data", {})
-
-    if not event_type:
-        return jsonify({"error": "event_type is required"}), 400
-
-    session_logger.log(event_type, data)
-    return jsonify({"ok": True})
-
-
-@app.get("/api/session_log")
-def get_session_log():
-    return jsonify({
-        "session_id": session_logger.session_id,
-        "entries": session_logger.get_entries(),
-    })
-
-
-if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=5000, debug=True)
