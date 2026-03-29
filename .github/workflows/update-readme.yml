@@ -28,111 +28,111 @@ jobs:
       - name: Generate README from source code
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-        run: python3 << 'EOF'
-import os
-import glob
-import subprocess
-from pathlib import Path
-import google.generativeai as genai
+        run: |
+          python3 - << 'EOF'
+          import os
+          import subprocess
+          from pathlib import Path
+          import google.generativeai as genai
 
-# Configure Gemini
-api_key = os.getenv('GEMINI_API_KEY')
-if not api_key:
-    raise ValueError("GEMINI_API_KEY secret not found in GitHub repository secrets")
-genai.configure(api_key=api_key)
+          # Configure Gemini
+          api_key = os.getenv('GEMINI_API_KEY')
+          if not api_key:
+            raise ValueError("GEMINI_API_KEY secret not found in GitHub repository secrets")
+          genai.configure(api_key=api_key)
 
-# Find all Python and JSX source files (exclude node_modules, venv, __pycache__)
-repo_root = Path('.')
-source_files = []
+          # Find all Python and JSX source files (exclude node_modules, venv, __pycache__)
+          repo_root = Path('.')
+          source_files = []
 
-# Extensions to include
-extensions = ('*.py', '*.jsx')
+          # Extensions to include
+          extensions = ('*.py', '*.jsx')
 
-# Directories to exclude
-exclude_dirs = {'node_modules', 'venv', '__pycache__', '.git', '.github', 'dist', 'build'}
+          # Directories to exclude
+          exclude_dirs = {'node_modules', 'venv', '__pycache__', '.git', '.github', 'dist', 'build'}
 
-# Recursively find source files
-for ext in extensions:
-    for filepath in repo_root.glob(f'**/{ext}'):
-        # Skip if in excluded directory
-        if any(part in exclude_dirs for part in filepath.parts):
-            continue
-        # Skip if it's the generated README script itself
-        if '.github/workflows' in str(filepath):
-            continue
-        source_files.append(filepath)
+          # Recursively find source files
+          for ext in extensions:
+            for filepath in repo_root.glob(f'**/{ext}'):
+              # Skip if in excluded directory
+              if any(part in exclude_dirs for part in filepath.parts):
+                continue
+              # Skip if it's the generated README script itself
+              if '.github/workflows' in str(filepath):
+                continue
+              source_files.append(filepath)
 
-# Sort for consistent ordering
-source_files.sort()
+          # Sort for consistent ordering
+          source_files.sort()
 
-print(f"Found {len(source_files)} source files")
+          print(f"Found {len(source_files)} source files")
 
-# Read and concatenate all source file contents
-context = "=== SOURCE CODE CONTEXT ===\n\n"
-for filepath in source_files:
-    try:
-        with open(filepath, 'r', encoding='utf-8', errors='ignore') as f:
-            content = f.read()
-        context += f"FILE: {filepath}\n"
-        context += f"{'='*60}\n"
-        context += content
-        context += f"\n{'='*60}\n\n"
-    except Exception as e:
-        print(f"Warning: Could not read {filepath}: {e}")
+          # Read and concatenate all source file contents
+          context = "=== SOURCE CODE CONTEXT ===\n\n"
+          for filepath in source_files:
+            try:
+              with open(filepath, 'r', encoding='utf-8', errors='ignore') as f:
+                content = f.read()
+              context += f"FILE: {filepath}\n"
+              context += f"{'=' * 60}\n"
+              context += content
+              context += f"\n{'=' * 60}\n\n"
+            except Exception as e:
+              print(f"Warning: Could not read {filepath}: {e}")
 
-# Show context size
-print(f"Total context size: {len(context)} characters")
+          # Show context size
+          print(f"Total context size: {len(context)} characters")
 
-# Call Gemini 2.5 Flash API
-prompt = """You are a technical documentation writer. Based on the following source code from a project called The Foundry, write a complete accurate professional README.md. The Foundry is an AI-powered structural engineering platform for solo engineers. It automates FEA simulation using a LangGraph multi-agent pipeline. Only document features that actually exist in the code. Be specific and technical. Include sections for: project description, features, tech stack, how it works, local setup instructions, agent architecture, and DGX integration. Write clean markdown with clear headers. Do not invent features not present in the code."""
+          # Call Gemini 2.5 Flash API
+          prompt = """You are a technical documentation writer. Based on the following source code from a project called The Foundry, write a complete accurate professional README.md. The Foundry is an AI-powered structural engineering platform for solo engineers. It automates FEA simulation using a LangGraph multi-agent pipeline. Only document features that actually exist in the code. Be specific and technical. Include sections for: project description, features, tech stack, how it works, local setup instructions, agent architecture, and DGX integration. Write clean markdown with clear headers. Do not invent features not present in the code."""
 
-print("Calling Gemini API...")
-model = genai.GenerativeModel('gemini-2.5-flash')
-response = model.generate_content(
-    prompt + "\n\n" + context,
-    safety_settings=[
-        {
-            "category": "HARM_CATEGORY_HARASSMENT",
-            "threshold": "BLOCK_NONE",
-        },
-        {
-            "category": "HARM_CATEGORY_HATE_SPEECH",
-            "threshold": "BLOCK_NONE",
-        },
-        {
-            "category": "HARM_CATEGORY_SEXUALLY_EXPLICIT",
-            "threshold": "BLOCK_NONE",
-        },
-        {
-            "category": "HARM_CATEGORY_DANGEROUS_CONTENT",
-            "threshold": "BLOCK_NONE",
-        },
-    ]
-)
+          print("Calling Gemini API...")
+          model = genai.GenerativeModel('gemini-2.5-flash')
+          response = model.generate_content(
+            prompt + "\n\n" + context,
+            safety_settings=[
+              {
+                "category": "HARM_CATEGORY_HARASSMENT",
+                "threshold": "BLOCK_NONE",
+              },
+              {
+                "category": "HARM_CATEGORY_HATE_SPEECH",
+                "threshold": "BLOCK_NONE",
+              },
+              {
+                "category": "HARM_CATEGORY_SEXUALLY_EXPLICIT",
+                "threshold": "BLOCK_NONE",
+              },
+              {
+                "category": "HARM_CATEGORY_DANGEROUS_CONTENT",
+                "threshold": "BLOCK_NONE",
+              },
+            ]
+          )
 
-readme_content = response.text
-print(f"Generated README size: {len(readme_content)} characters")
+          readme_content = response.text
+          print(f"Generated README size: {len(readme_content)} characters")
 
-# Write to README.md
-readme_path = Path('README.md')
-with open(readme_path, 'w', encoding='utf-8') as f:
-    f.write(readme_content)
-print(f"Wrote {readme_path}")
+          # Write to README.md
+          readme_path = Path('README.md')
+          with open(readme_path, 'w', encoding='utf-8') as f:
+            f.write(readme_content)
+          print(f"Wrote {readme_path}")
 
-# Configure git
-subprocess.run(['git', 'config', 'user.email', 'github-actions[bot]@users.noreply.github.com'], check=True)
-subprocess.run(['git', 'config', 'user.name', 'github-actions[bot]'], check=True)
+          # Configure git
+          subprocess.run(['git', 'config', 'user.email', 'github-actions[bot]@users.noreply.github.com'], check=True)
+          subprocess.run(['git', 'config', 'user.name', 'github-actions[bot]'], check=True)
 
-# Stage and commit
-subprocess.run(['git', 'add', 'README.md'], check=True)
-result = subprocess.run(['git', 'diff', '--cached', '--quiet'], capture_output=True)
+          # Stage and commit
+          subprocess.run(['git', 'add', 'README.md'], check=True)
+          result = subprocess.run(['git', 'diff', '--cached', '--quiet'], capture_output=True)
 
-if result.returncode != 0:
-    # Changes detected
-    subprocess.run(['git', 'commit', '-m', 'Auto-update README from source code'], check=True)
-    subprocess.run(['git', 'push'], check=True)
-    print("README.md updated and pushed successfully")
-else:
-    print("No changes to README.md, skipping commit")
+          if result.returncode != 0:
+            # Changes detected
+            subprocess.run(['git', 'commit', '-m', 'Auto-update README from source code'], check=True)
+            subprocess.run(['git', 'push'], check=True)
+            print("README.md updated and pushed successfully")
+          else:
+            print("No changes to README.md, skipping commit")
 
-EOF
+          EOF
