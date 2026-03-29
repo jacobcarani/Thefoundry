@@ -72,6 +72,13 @@ def _safe_json_number(value):
     return number
 
 
+def _stl_exists_in_workspace(filename: str) -> bool:
+    name = str(filename or "").strip()
+    if not name:
+        return False
+    return (UPLOAD_DIR / name).exists() or (MODELS_DIR / name).exists()
+
+
 @app.get("/health")
 def health():
     return jsonify({"status": "ok"})
@@ -191,8 +198,7 @@ def run_simulation():
     if not stl_filename:
         return jsonify({"error": "stl_filename is required"}), 400
 
-    stl_path = UPLOAD_DIR / stl_filename
-    if not stl_path.exists():
+    if not _stl_exists_in_workspace(stl_filename):
         return jsonify({"error": "STL file not found"}), 404
 
     try:
@@ -284,8 +290,7 @@ def run_agent_pipeline_endpoint():
     if not session_id:
         return jsonify({"error": "session_id is required"}), 400
 
-    stl_path = UPLOAD_DIR / stl_filename
-    if not stl_path.exists():
+    if not _stl_exists_in_workspace(stl_filename):
         return jsonify({"error": "STL file not found"}), 404
 
     try:

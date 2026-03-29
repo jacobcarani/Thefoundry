@@ -116,6 +116,20 @@ function formatElapsed(ms) {
   return `${(numeric / 1000).toFixed(2)}s`;
 }
 
+function specialistLabel(rec) {
+  const raw = String(rec?.specialist || '').trim().toUpperCase();
+  if (raw === 'GEOMETRY') {
+    return 'GEOMETRY';
+  }
+  if (raw === 'MATERIAL' || raw === 'MATERIALS') {
+    return 'MATERIAL';
+  }
+  if (raw === 'LOAD_PATH' || raw === 'LOADPATH' || raw === 'LOAD PATH') {
+    return 'LOAD PATH';
+  }
+  return raw || 'GEOMETRY';
+}
+
 async function uploadModelWithProgress(url, formData, onUploadProgress) {
   return new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest();
@@ -561,7 +575,7 @@ export default function App() {
           geometry.computeBoundingBox();
           
           setGeometry(geometry);
-          setFilename('MOUSQUETON.stl (default)');
+          setFilename('MOUSQUETON_default.stl');
           setStatus('DEFAULT MODEL LOADED. ENTER FORCE DESCRIPTION.');
           setPartDescription({ material: 'steel', partPurpose: 'carabiner' });
           
@@ -1235,7 +1249,16 @@ export default function App() {
       });
 
       if (!response.ok) {
-        throw new Error('Failed to submit simulation');
+        let serverError = `Failed to submit simulation (${response.status})`;
+        try {
+          const payload = await response.json();
+          if (payload?.error) {
+            serverError = String(payload.error);
+          }
+        } catch {
+          // Keep default message when response body is not valid JSON.
+        }
+        throw new Error(serverError);
       }
 
       updateTaskProgress({ step: 'PROCESSING SIMULATION RESULT', percent: 85 });
@@ -1274,10 +1297,10 @@ export default function App() {
         safety_factor: result.safety_factor,
         verdict: result.passed ? 'PASS' : 'FAIL',
       });
-    } catch {
+    } catch (err) {
       failTimedStep('simulation', 'Simulation pipeline request failed.');
       finishTaskProgress();
-      const warning = 'SIMULATION SUBMISSION FAILED.';
+      const warning = String(err?.message || 'SIMULATION SUBMISSION FAILED.').toUpperCase();
       setInlineWarning(warning);
       setStatus('SIMULATION PIPELINE ERROR.');
       setChatMessages((prev) => [...prev, { role: 'AI', label: 'SYSTEM', text: warning }]);
@@ -1545,7 +1568,7 @@ export default function App() {
               {Array.isArray(simulationResult?.redesign_recommendations) && simulationResult.redesign_recommendations.length > 0 ? (
                 simulationResult.redesign_recommendations.map((rec, idx) => (
                   <div key={`rec-card-${idx}`} className="rec-card">
-                    <div className="rec-label">REC {String(idx + 1).padStart(2, '0')} · GEOMETRY AGENT</div>
+                    <div className="rec-label">REC {String(idx + 1).padStart(2, '0')} · {specialistLabel(rec)} SPECIALIST</div>
                     <div className="rec-text">
                       {(rec.specific_change || rec.expected_improvement || rec.zone_description || 'NO RECOMMENDATION RETURNED.').toUpperCase()}
                     </div>

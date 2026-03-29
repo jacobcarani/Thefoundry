@@ -2,6 +2,7 @@ import json
 import os
 import sqlite3
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, TypedDict
@@ -64,6 +65,7 @@ class PipelineState(TypedDict, total=False):
 
     iteration_history: list[dict[str, Any]]
     iteration_number: int
+    swarm_specialist_outputs: list[dict[str, Any]]
     redesign_recommendations: list[dict[str, Any]]
 
 
@@ -565,6 +567,10 @@ def simulation_agent(state: PipelineState) -> PipelineState:
     stl_filename = str(state.get("stl_filename", "")).strip()
     stl_path = UPLOAD_DIR / stl_filename
     if not stl_path.exists():
+        model_path = MODELS_DIR / stl_filename
+        if model_path.exists():
+            stl_path = model_path
+    if not stl_path.exists():
         raise RuntimeError("SimulationAgent: STL file not found")
 
     bc = state.get("boundary_conditions", {})
@@ -688,121 +694,309 @@ def memory_agent(state: PipelineState) -> PipelineState:
     return state
 
 
-def _gemini_recommendations(
-    geometry_analysis: dict[str, Any],
-    failure_report: dict[str, Any],
-    history: list[dict[str, Any]],
-    part_context: dict[str, Any],
-    api_key: str,
-) -> list[dict[str, Any]]:
+def _extract_json_payload(text: str, opener: str, closer: str, default: str) -> str:
+    raw = str(text or "").strip()
+    start = raw.find(opener)
+    end = raw.rfind(closer)
+    if start != -1 and end != -1 and end >= start:
+        return raw[start:end + 1]
+    return default
+
+
+def _parse_percent(value: Any, default: float = 0.0) -> float:
+    if isinstance(value, (int, float)):
+        return float(value)
+    text = str(value or "").strip().replace("%", "")
+    try:
+        return float(text)
+    except Exception:
+        return float(default)
+
+
+def _normalize_specialist_name(value: str) -> str:
+    text = " ".join(str(value or "").strip().lower().replace("_", " ").split())
+    if text in {"geometry", "geometry specialist", "geometryspecialistagent"}:
+        return "GEOMETRY"
+    if text in {"material", "materials", "material specialist", "materialspecialistagent"}:
+        return "MATERIAL"
+    if text in {"load path", "loadpath", "load path specialist", "loadpathspecialistagent", "topology"}:
+        return "LOAD PATH"
+    return text.upper() if text else "UNKNOWN"
+
+
+def _normalize_recommendation(
+    item: dict[str, Any],
+    default_specialist: str,
+    rank: int | None = None,
+    conflicts: str | None = None,
+) -> dict[str, Any]:
+    specialist = _normalize_specialist_name(str(item.get("specialist", default_specialist)))
+    zone = str(item.get("zone", item.get("zone_description", ""))).strip() or "UNSPECIFIED ZONE"
+    change = str(item.get("change", item.get("specific_change", ""))).strip() or "NO CHANGE SPECIFIED"
+    pct = _parse_percent(item.get("predicted_improvement_percent", item.get("predicted_improvement", 0.0)), default=0.0)
+
+    rec: dict[str, Any] = {
+        "specialist": specialist,
+        "zone": zone,
+        "change": change,
+        "predicted_improvement_percent": pct,
+        "zone_description": zone,
+        "specific_change": change,
+        "expected_improvement": f"ESTIMATED {pct:.1f}% IMPROVEMENT",
+    }
+    if rank is not None:
+        rec["rank"] = int(rank)
+        rec["priority"] = int(rank)
+    if conflicts is not None:
+        rec["conflicts"] = str(conflicts)
+    return rec
+
+
+def _is_placeholder_recommendation(rec: dict[str, Any]) -> bool:
+    zone = str(rec.get("zone", "")).strip().upper()
+    change = str(rec.get("change", "")).strip().upper()
+    return zone in {"", "UNSPECIFIED ZONE"} or change in {"", "NO CHANGE SPECIFIED"}
+
+
+def _gemini_generate(prompt: str, api_key: str) -> str:
     if not api_key:
-        return []
-
-    material = str(part_context.get("material", "unknown") or "unknown")
-    part_description = str(part_context.get("part_purpose", "unknown") or "unknown")
-    resolved_material, yield_strength_mpa = _lookup_yield_strength_mpa(material, part_description)
-    if yield_strength_mpa is None:
-        fallback_mat = _get_material_properties(material)
-        yield_strength_mpa = float(fallback_mat.get("yield", 2.75e8)) / 1_000_000.0
-
-    max_stress_mpa = float(failure_report.get("zones", [{}])[0].get("max_stress", 0.0)) / 1_000_000.0
-    safety_factor = float(failure_report.get("zones", [{}])[0].get("local_safety_factor", 0.0))
-    stress_excess_percent = max(0.0, ((max_stress_mpa / max(yield_strength_mpa, 1e-9)) - 1.0) * 100.0)
-    failure_zones = json.dumps(failure_report.get("failed_zones", []), indent=2)
-    iteration_history = json.dumps(history, indent=2)
-    geometry_agent_output = json.dumps(
-        {
-            "thin_wall_regions": geometry_analysis.get("thin_wall_regions", []),
-            "sharp_interior_corners": geometry_analysis.get("sharp_interior_corners", []),
-            "through_holes": geometry_analysis.get("through_holes", []),
-            "bounding_box_dimensions_mm": geometry_analysis.get("bbox_dimensions", [0.0, 0.0, 0.0]),
-            "estimated_min_cross_sectional_area_mm2": geometry_analysis.get("estimated_min_cross_sectional_area", 0.0),
-        },
-        indent=2,
-    )
-
-    pythonprompt = f"""
-You are a mechanical engineering analysis system. You must provide specific, actionable structural redesign recommendations based on FEA results. You are not a general assistant. Do not use vague language.
-
-PART CONTEXT:
-Material: {resolved_material}
-Yield Strength: {yield_strength_mpa} MPa
-Part Description: {part_description}
-
-GEOMETRIC FEATURES IDENTIFIED:
-{geometry_agent_output}
-
-SIMULATION RESULTS:
-Max Von Mises Stress: {max_stress_mpa} MPa
-Safety Factor: {safety_factor}
-Failure Threshold: 2.0
-Stress Exceeded By: {stress_excess_percent}%
-
-TOP FAILURE ZONES:
-{failure_zones}
-
-ITERATION HISTORY:
-{iteration_history}
-
-RULES:
-- Every recommendation must name a specific geometric feature (fillet, wall, boss, rib, hole, corner)
-- Every recommendation must include a specific numeric change (increase fillet from Xmm to Ymm, add Zmm wall thickness)
-- Every recommendation must include a predicted stress reduction percentage based on engineering principles
-- If iteration history exists, you must reference what was already tried and explain why this recommendation is different
-- Do not recommend adding material in general terms
-- Do not say "consider" or "may help" — be definitive
-- If the part is fundamentally under-designed for this load case, say so explicitly
-
-Return ONLY a JSON array with exactly 3 objects. Each object has these fields:
-- zone: string describing the specific geometric feature
-- change: string with the specific numeric modification
-- predicted_improvement: string with expected stress reduction percentage and reasoning
-- priority: integer 1 2 or 3 where 1 is most impactful
-
-No other text. No markdown. No explanation outside the JSON array.
-"""
-
+        return ""
     try:
         import google.generativeai as genai
 
         genai.configure(api_key=api_key)
         model = genai.GenerativeModel("gemini-2.5-flash")
-        response = model.generate_content(pythonprompt)
-        text = (response.text or "[]").strip()
-        start = text.find("[")
-        end = text.rfind("]")
-        if start != -1 and end != -1 and end >= start:
-            text = text[start:end + 1]
-        parsed = json.loads(text)
-        if not isinstance(parsed, list):
-            return []
-        cleaned: list[dict[str, Any]] = []
-        for item in parsed[:3]:
-            if not isinstance(item, dict):
-                continue
-            zone = str(item.get("zone", item.get("zone_description", ""))).strip()
-            change = str(item.get("change", item.get("specific_change", ""))).strip()
-            predicted = str(item.get("predicted_improvement", item.get("expected_improvement", ""))).strip()
-            try:
-                priority = int(item.get("priority", len(cleaned) + 1))
-            except Exception:
-                priority = len(cleaned) + 1
-            priority = max(1, min(3, priority))
-            cleaned.append(
-                {
-                    "zone": zone,
-                    "change": change,
-                    "predicted_improvement": predicted,
-                    "priority": priority,
-                    # Keep compatibility with current frontend rendering keys.
-                    "zone_description": zone,
-                    "specific_change": change,
-                    "expected_improvement": predicted,
-                }
-            )
-        return cleaned
+        response = model.generate_content(prompt)
+        return str(response.text or "")
     except Exception:
+        return ""
+
+
+def _specialist_fallback(specialist: str, failure_report: dict[str, Any]) -> dict[str, Any]:
+    zones = list(failure_report.get("failed_zones", [])) or list(failure_report.get("zones", []))
+    zone = zones[0] if zones else {}
+    center = zone.get("center", [0.0, 0.0, 0.0])
+    zone_text = f"ZONE NEAR ({float(center[0]):.2f}, {float(center[1]):.2f}, {float(center[2]):.2f})"
+
+    if specialist == "GEOMETRY":
+        return _normalize_recommendation(
+            {
+                "specialist": specialist,
+                "zone": zone_text,
+                "change": "INCREASE LOCAL FILLET FROM 1.5MM TO 4.0MM AND THICKEN ADJACENT WALL BY 0.8MM.",
+                "predicted_improvement_percent": 18.0,
+            },
+            default_specialist=specialist,
+        )
+    if specialist == "MATERIAL":
+        return _normalize_recommendation(
+            {
+                "specialist": specialist,
+                "zone": "BASE MATERIAL SELECTION",
+                "change": "SWITCH FROM 6061-T6 ALUMINUM TO 7075-T6 ALUMINUM FOR HIGHER YIELD STRENGTH.",
+                "predicted_improvement_percent": 22.0,
+            },
+            default_specialist=specialist,
+        )
+    return _normalize_recommendation(
+        {
+            "specialist": "LOAD PATH",
+            "zone": zone_text,
+            "change": "ADD A 3.0MM RIB TO CONNECT LOAD INPUT TO THE CLOSEST SUPPORT AND SHORTEN FORCE PATH.",
+            "predicted_improvement_percent": 16.0,
+        },
+        default_specialist="LOAD PATH",
+    )
+
+
+def _geometry_specialist_agent(failure_report: dict[str, Any], geometry_analysis: dict[str, Any], api_key: str) -> dict[str, Any]:
+    prompt = f"""
+You are a geometric optimization specialist focused exclusively on shape modifications: fillets, wall thickness, ribs, bosses, and cross-sectional area.
+
+FAILURE REPORT:
+{json.dumps(failure_report, indent=2)}
+
+GEOMETRY ANALYSIS:
+{json.dumps(geometry_analysis, indent=2)}
+
+Return exactly one recommendation as a JSON object with fields:
+- specialist
+- zone
+- change
+- predicted_improvement_percent
+
+Do not include markdown or explanatory text.
+"""
+    text = _gemini_generate(prompt, api_key)
+    try:
+        payload = json.loads(_extract_json_payload(text, "{", "}", "{}"))
+        if isinstance(payload, dict):
+            rec = _normalize_recommendation(payload, default_specialist="GEOMETRY")
+            if not _is_placeholder_recommendation(rec):
+                return rec
+    except Exception:
+        pass
+    return _specialist_fallback("GEOMETRY", failure_report)
+
+
+def _material_specialist_agent(failure_report: dict[str, Any], part_context: dict[str, Any], api_key: str) -> dict[str, Any]:
+    material = str(part_context.get("material", "unknown") or "unknown")
+    part_description = str(part_context.get("part_purpose", "") or "")
+    resolved_material, yield_strength_mpa = _lookup_yield_strength_mpa(material, part_description)
+    if yield_strength_mpa is None:
+        props = _get_material_properties(material)
+        yield_strength_mpa = float(props.get("yield", 2.75e8)) / 1_000_000.0
+
+    prompt = f"""
+You are a materials engineer focused exclusively on whether the material selection is appropriate for this load case, and whether switching alloy grade or material family would solve the problem.
+
+FAILURE REPORT:
+{json.dumps(failure_report, indent=2)}
+
+MATERIAL PROPERTIES:
+{json.dumps({"material": material, "resolved_material": resolved_material, "yield_strength_mpa": yield_strength_mpa}, indent=2)}
+
+Return exactly one recommendation as a JSON object with fields:
+- specialist
+- zone
+- change
+- predicted_improvement_percent
+
+Do not include markdown or explanatory text.
+"""
+    text = _gemini_generate(prompt, api_key)
+    try:
+        payload = json.loads(_extract_json_payload(text, "{", "}", "{}"))
+        if isinstance(payload, dict):
+            rec = _normalize_recommendation(payload, default_specialist="MATERIAL")
+            if not _is_placeholder_recommendation(rec):
+                return rec
+    except Exception:
+        pass
+    return _specialist_fallback("MATERIAL", failure_report)
+
+
+def _load_path_specialist_agent(failure_report: dict[str, Any], stress_points: list[dict[str, Any]], api_key: str) -> dict[str, Any]:
+    prompt = f"""
+You are a structural topology specialist focused on how load is traveling through the part and whether the geometry is routing force efficiently.
+
+FAILURE REPORT:
+{json.dumps(failure_report, indent=2)}
+
+FULL STRESS POINT DISTRIBUTION:
+{json.dumps(stress_points, indent=2)}
+
+Return exactly one recommendation as a JSON object with fields:
+- specialist
+- zone
+- change
+- predicted_improvement_percent
+
+Do not include markdown or explanatory text.
+"""
+    text = _gemini_generate(prompt, api_key)
+    try:
+        payload = json.loads(_extract_json_payload(text, "{", "}", "{}"))
+        if isinstance(payload, dict):
+            rec = _normalize_recommendation(payload, default_specialist="LOAD PATH")
+            if not _is_placeholder_recommendation(rec):
+                return rec
+    except Exception:
+        pass
+    return _specialist_fallback("LOAD PATH", failure_report)
+
+
+def _run_parallel_specialists(
+    geometry_analysis: dict[str, Any],
+    failure_report: dict[str, Any],
+    simulation_result: dict[str, Any],
+    part_context: dict[str, Any],
+    api_key: str,
+) -> list[dict[str, Any]]:
+    stress_points = list(simulation_result.get("stress_points", []))
+    outputs: dict[str, dict[str, Any]] = {}
+
+    with ThreadPoolExecutor(max_workers=3) as executor:
+        futures = {
+            "GEOMETRY": executor.submit(_geometry_specialist_agent, failure_report, geometry_analysis, api_key),
+            "MATERIAL": executor.submit(_material_specialist_agent, failure_report, part_context, api_key),
+            "LOAD PATH": executor.submit(_load_path_specialist_agent, failure_report, stress_points, api_key),
+        }
+        for key, future in futures.items():
+            try:
+                outputs[key] = future.result(timeout=120)
+            except Exception:
+                outputs[key] = _specialist_fallback(key, failure_report)
+
+    ordered = [outputs.get("GEOMETRY"), outputs.get("MATERIAL"), outputs.get("LOAD PATH")]
+    return [item for item in ordered if isinstance(item, dict)]
+
+
+def _synthesis_agent(
+    specialist_outputs: list[dict[str, Any]],
+    history: list[dict[str, Any]],
+    api_key: str,
+) -> list[dict[str, Any]]:
+    if len(specialist_outputs) < 3:
         return []
+
+    prompt = f"""
+You are a senior structural engineer reviewing three specialist recommendations.
+Rank them by expected impact, identify if any contradict each other and explain why, and produce a final ordered list of three recommendations.
+
+SPECIALIST RECOMMENDATIONS:
+{json.dumps(specialist_outputs, indent=2)}
+
+ITERATION HISTORY:
+{json.dumps(history, indent=2)}
+
+Return only a JSON array with exactly 3 objects.
+Each object must include fields:
+- specialist
+- zone
+- change
+- predicted_improvement_percent
+- rank
+- conflicts
+
+Do not include markdown or explanatory text.
+"""
+
+    text = _gemini_generate(prompt, api_key)
+    try:
+        payload = json.loads(_extract_json_payload(text, "[", "]", "[]"))
+    except Exception:
+        payload = []
+
+    if not isinstance(payload, list):
+        payload = []
+
+    cleaned: list[dict[str, Any]] = []
+    for idx, item in enumerate(payload[:3], start=1):
+        if not isinstance(item, dict):
+            continue
+        rec = _normalize_recommendation(
+            item,
+            default_specialist=str(item.get("specialist", "GEOMETRY")),
+            rank=int(item.get("rank", idx) or idx),
+            conflicts=str(item.get("conflicts", "NONE")),
+        )
+        cleaned.append(rec)
+
+    if len(cleaned) == 3:
+        cleaned.sort(key=lambda r: int(r.get("rank", 99)))
+        return cleaned
+
+    fallback = sorted(
+        [_normalize_recommendation(item, default_specialist=str(item.get("specialist", "UNKNOWN"))) for item in specialist_outputs],
+        key=lambda rec: float(rec.get("predicted_improvement_percent", 0.0)),
+        reverse=True,
+    )[:3]
+    for idx, rec in enumerate(fallback, start=1):
+        rec["rank"] = idx
+        rec["priority"] = idx
+        rec["conflicts"] = "NONE"
+    return fallback
 
 
 def _fallback_recommendations(failure_report: dict[str, Any]) -> list[dict[str, Any]]:
@@ -810,28 +1004,37 @@ def _fallback_recommendations(failure_report: dict[str, Any]) -> list[dict[str, 
     if not zones:
         return [
             {
+                "specialist": "GEOMETRY",
                 "zone": "Global structure",
                 "change": "Increase primary wall thickness from 3.0mm to 4.0mm.",
-                "predicted_improvement": "Estimated 18-25% peak stress reduction by increasing section modulus in the main load path.",
+                "predicted_improvement_percent": 22.0,
                 "priority": 1,
+                "rank": 1,
+                "conflicts": "NONE",
                 "zone_description": "Global structure",
                 "specific_change": "Increase primary wall thickness from 3.0mm to 4.0mm.",
                 "expected_improvement": "Estimated 18-25% peak stress reduction by increasing section modulus in the main load path.",
             },
             {
+                "specialist": "MATERIAL",
                 "zone": "Force application interfaces",
                 "change": "Increase local fillet radius from 1.5mm to 4.0mm at loaded corners.",
-                "predicted_improvement": "Estimated 12-20% stress concentration reduction by reducing notch sensitivity.",
+                "predicted_improvement_percent": 16.0,
                 "priority": 2,
+                "rank": 2,
+                "conflicts": "NONE",
                 "zone_description": "Force application interfaces",
                 "specific_change": "Increase local fillet radius from 1.5mm to 4.0mm at loaded corners.",
                 "expected_improvement": "Estimated 12-20% stress concentration reduction by reducing notch sensitivity.",
             },
             {
+                "specialist": "LOAD PATH",
                 "zone": "Load-bearing spans",
                 "change": "Add one 3.0mm-thick rib across the dominant bending span.",
-                "predicted_improvement": "Estimated 10-18% stress reduction from increased bending stiffness.",
+                "predicted_improvement_percent": 14.0,
                 "priority": 3,
+                "rank": 3,
+                "conflicts": "NONE",
                 "zone_description": "Load-bearing spans",
                 "specific_change": "Add one 3.0mm-thick rib across the dominant bending span.",
                 "expected_improvement": "Estimated 10-18% stress reduction from increased bending stiffness.",
@@ -843,10 +1046,13 @@ def _fallback_recommendations(failure_report: dict[str, Any]) -> list[dict[str, 
         center = z.get("center", [0.0, 0.0, 0.0])
         recs.append(
             {
+                "specialist": "GEOMETRY" if len(recs) == 0 else ("MATERIAL" if len(recs) == 1 else "LOAD PATH"),
                 "zone": f"Corner near ({center[0]:.2f}, {center[1]:.2f}, {center[2]:.2f})",
                 "change": "Increase corner fillet radius from 1.0mm to 3.0mm and thicken adjacent wall from 2.5mm to 3.2mm.",
-                "predicted_improvement": "Estimated 15-24% local stress reduction from reduced notch effect and increased local section.",
+                "predicted_improvement_percent": 19.0,
                 "priority": min(len(recs) + 1, 3),
+                "rank": min(len(recs) + 1, 3),
+                "conflicts": "NONE",
                 "zone_description": f"Zone around ({center[0]:.2f}, {center[1]:.2f}, {center[2]:.2f})",
                 "specific_change": "Increase corner fillet radius from 1.0mm to 3.0mm and thicken adjacent wall from 2.5mm to 3.2mm.",
                 "expected_improvement": "Estimated 15-24% local stress reduction from reduced notch effect and increased local section.",
@@ -856,10 +1062,13 @@ def _fallback_recommendations(failure_report: dict[str, Any]) -> list[dict[str, 
     while len(recs) < 3:
         recs.append(
             {
+                "specialist": "LOAD PATH",
                 "zone": "Secondary support region",
                 "change": "Add a 2.5mm-thick rib tied into the nearest support and enlarge root fillet from 1.5mm to 3.5mm.",
-                "predicted_improvement": "Estimated 10-17% hotspot stress reduction by redistributing load path stiffness.",
+                "predicted_improvement_percent": 13.0,
                 "priority": min(len(recs) + 1, 3),
+                "rank": min(len(recs) + 1, 3),
+                "conflicts": "NONE",
                 "zone_description": "Secondary support region",
                 "specific_change": "Add a 2.5mm-thick rib tied into the nearest support and enlarge root fillet from 1.5mm to 3.5mm.",
                 "expected_improvement": "Estimated 10-17% hotspot stress reduction by redistributing load path stiffness.",
@@ -874,15 +1083,24 @@ def redesign_agent(state: PipelineState) -> PipelineState:
     failure_report = dict(state.get("failure_report", {}))
     history = list(state.get("iteration_history", []))
     part_context = dict(state.get("part_context", {}))
+    simulation_result = dict(state.get("simulation_result", {}))
     api_key = os.getenv("GEMINI_API_KEY", "")
 
-    recs = _gemini_recommendations(
+    specialist_outputs = _run_parallel_specialists(
         geometry_analysis=geometry_analysis,
         failure_report=failure_report,
-        history=history,
+        simulation_result=simulation_result,
         part_context=part_context,
         api_key=api_key,
     )
+    state["swarm_specialist_outputs"] = specialist_outputs
+
+    recs = _synthesis_agent(
+        specialist_outputs=specialist_outputs,
+        history=history,
+        api_key=api_key,
+    )
+
     if len(recs) != 3:
         recs = _fallback_recommendations(failure_report)
 
@@ -944,6 +1162,7 @@ def run_agent_pipeline(
 
     simulation_result = dict(out.get("simulation_result", {}))
     simulation_result["redesign_recommendations"] = list(out.get("redesign_recommendations", []))
+    simulation_result["swarm_specialist_outputs"] = list(out.get("swarm_specialist_outputs", []))
     simulation_result["iteration_number"] = int(out.get("iteration_number", 1))
     simulation_result["failure_report"] = dict(out.get("failure_report", {}))
     simulation_result["geometry_analysis"] = dict(out.get("geometry_analysis", {}))
